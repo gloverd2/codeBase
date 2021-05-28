@@ -1,0 +1,6 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^man-roxygen$
+^data-raw$
+^README.rmd
+^README_files

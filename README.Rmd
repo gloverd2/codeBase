@@ -1,0 +1,203 @@
+
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# codeBase
+
+# Introduction
+
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, include =TRUE)
+```
+
+```{r Load Library, include=FALSE}
+library(codeBase)
+library(tidyverse)
+library(checkmate)
+library(magrittr)
+library(data.table)
+library(testthat)
+library(knitr)
+```
+
+```{r, echo = FALSE, include = FALSE}
+sessionInfo()
+```
+
+## What functions are included in the package?
+
+Currently the master branch contains the following functions however we have many others as pull request
+```{r Package Functions}
+ls("package:codeBase")
+```
+
+# Using the Package
+
+## Import 'Predicting Household Sale Prices' dataset
+
+Importing the packages inbuilt testing datasets
+```{r Import data}
+data(hh_train)
+data(hh_test)
+```
+
+This data is the Californian house prices dataset and has a target of `r "SalePrice"`
+
+```{r process data, include=FALSE}
+target <- 'SalePrice'
+hh_train %<>% select(all_of(c(intersect(names(hh_train), names(hh_test)), target)))
+hh_test %<>% select(intersect(names(hh_train), names(hh_test)))
+names(hh_train)
+```
+
+## Data Exploration
+
+### expl_na
+For each variable, find the number or percentage of NA's in a dataset
+```{r expl_na}
+na_vars <- codeBase::expl_na(df = hh_train, na.strings = NULL, ignore.case = FALSE) 
+```
+
+
+We can now see that we have some factors which are useless as they are mostly unknown:
+```{r echo=TRUE}
+head(dplyr::arrange(na_vars, -na)) %>% kable()
+```
+
+### expl_categorical
+For each categorical variable, find the number of / percentage of each level
+```{r expl_categorical}
+codeBase::expl_categorical(df = hh_train, char.level = 3, num.level =2)  %>% kable()
+```
+
+This format can be easily plotted to show factor distributions for each factor (either in a loop or using ggplot2 facet functions)
+
+### expl_summary
+Find the mean, standard deviation, length, and NA count of numeric and integer variables, with the option to group by other variables
+```{r expl_summary}
+codeBase::expl_summary(hh_train, summarise_vars = "SalePrice", group_vars = "YrSold") %>% kable()
+```
+
+### encode_freq
+Apply frequency encoding with the option to group the rarest levels
+```{r include=TRUE}
+# Add some unknowns to show what it looks like
+hh_train$Neighborhood[5:10] <- NA
+```
+
+From the below output we can see that the factor Neighborhood has more levels than can usefully be modelled
+```{r encode_freq}
+hh_train %>% group_by(Neighborhood) %>% summarise(Volume = n()) %>% kable()
+```
+
+We decide to frequency encode the factor
+
+```{r echo=TRUE}
+nhood_freq <- codeBase::encode_freq(data = hh_train$Neighborhood, 
+                                n_levels = 5, 
+                                min_level_count = NULL, 
+                                unknown_levels = NULL,
+                                unknown_treatment_method = 1)
+```
+
+which gives us with the transformed factor
+
+```{r echo=TRUE}
+hh_train$nhood_freq <- factor(x = nhood_freq$data, labels = nhood_freq$levels)
+hh_train %>% group_by(nhood_freq) %>% summarise(Volume = n()) %>% kable()
+```
+
+## Build a Model
+
+We build a model using standard R functions
+```{r regression, include=TRUE}
+hh_train %<>% mutate(GarageYrBlt = coalesce(GarageYrBlt, YearBuilt))
+model_vars <- c('GarageYrBlt', 'nhood_freq', 'OverallCond', 'ExterCond', target)
+hh_train %<>% select(all_of(model_vars))
+model <- stats::glm(formula = 'SalePrice ~ .',
+                   family = 'gaussian',
+                   data = hh_train)
+summary(model)
+hh_train$pred <- predict(object = model, newdata = hh_train)
+```
+
+## Model Evaluation
+
+### plot_PDP
+
+We can now plot PDP plots for any factor
+```{r plot_PDP, warning=FALSE}
+codeBase::plot_PDP(data = hh_train,
+               model = model,
+               explain_col = 'GarageYrBlt',
+               n_bins = 20,
+               use_plotly = FALSE)
+```
+
+
+### plot_PDP for 2 factors
+
+We can also plot pairs of factors
+```{r plot_2D_PDP}
+codeBase::plot_PDP(data = hh_train,
+               model = model,
+               explain_col = c('GarageYrBlt', 'OverallCond'),
+               n_bins = 10,
+               use_plotly = FALSE)
+```
+
+Note:
+OverallCond: Rates the overall condition of the house
+10 - Very Excellent
+1 - Very Poor
+
+### plot_ALE
+
+We can now plot ALE plots for any factor
+```{r plot_ALE}
+codeBase::plot_ALE(data = hh_train,
+               model = model,
+               explain_col = 'GarageYrBlt',
+               n_bins = 20,
+               use_plotly = FALSE)
+```
+
+
+
+### plot_lift_curve
+
+We can also plot useful global model outputs such as lift curves
+```{r plot_lift_curve_plotly}
+codeBase::plot_lift_curve(actual = hh_train$SalePrice,
+                      predicted = hh_train$pred,
+                      use_plotly = FALSE)
+```
+
+### plotly vs ggplot2
+
+Some users may require plotly and others ggplot2 so all plots work with both engines. This can be controlled with the `use_plotly` parameter of the plotting functions.
+
+## Metrics
+
+We have many metrics all of which have the same construction of arguments meaning they can be used by other functions or in loops
+
+
+```{r multiple metrics}
+
+codeBase::metric_rmse(actual = hh_train$SalePrice, predicted = hh_train$pred)
+codeBase::metric_mae(actual = hh_train$SalePrice, predicted = hh_train$pred)
+
+codeBase::metric_deviance(actual = hh_train$SalePrice, predicted = hh_train$pred, family = "gaussian")
+codeBase::metric_nloglik(actual = hh_train$SalePrice, predicted = hh_train$pred, family = "gaussian")
+
+```
