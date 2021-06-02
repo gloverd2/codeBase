@@ -1,14 +1,11 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-codeBase
-========
+# codeBase
 
-Introduction
-============
+# Introduction
 
-What functions are included in the package?
--------------------------------------------
+## What functions are included in the package?
 
 Currently the master branch contains the following functions however we
 have many others as pull request
@@ -38,11 +35,9 @@ ls("package:codeBase")
 #> [41] "prep_num_bin"                   "prep_numeric_caps"
 ```
 
-Using the Package
-=================
+# Using the Package
 
-Import ‘Predicting Household Sale Prices’ dataset
--------------------------------------------------
+## Import ‘Predicting Household Sale Prices’ dataset
 
 Importing the packages inbuilt testing datasets
 
@@ -54,8 +49,7 @@ data(hh_test)
 This data is the Californian house prices dataset and has a target of
 SalePrice
 
-Data Exploration
-----------------
+## Data Exploration
 
 ### expl\_na
 
@@ -142,7 +136,6 @@ levels than can usefully be modelled
 
 ``` r
 hh_train %>% group_by(Neighborhood) %>% summarise(Volume = n()) %>% kable()
-#> `summarise()` ungrouping output (override with `.groups` argument)
 ```
 
 | Neighborhood | Volume |
@@ -189,7 +182,6 @@ which gives us with the transformed factor
 ``` r
 hh_train$nhood_freq <- factor(x = nhood_freq$data, labels = nhood_freq$levels)
 hh_train %>% group_by(nhood_freq) %>% summarise(Volume = n()) %>% kable()
-#> `summarise()` ungrouping output (override with `.groups` argument)
 ```
 
 | nhood\_freq | Volume |
@@ -202,65 +194,77 @@ hh_train %>% group_by(nhood_freq) %>% summarise(Volume = n()) %>% kable()
 | Somerst     |     85 |
 | Other       |    782 |
 
-Build a Model
--------------
+## Build a Model
 
 We build a model using standard R functions
 
 ``` r
 hh_train %<>% mutate(GarageYrBlt = coalesce(GarageYrBlt, YearBuilt))
-model_vars <- c('GarageYrBlt', 'nhood_freq', 'OverallCond', 'ExterCond', target)
+model_vars <- c('GarageYrBlt', 'nhood_freq', 'OverallCond', 'YearBuilt', 'YrSold', target)
 hh_train %<>% select(all_of(model_vars))
-model <- stats::glm(formula = 'SalePrice ~ .',
-                   family = 'gaussian',
-                   data = hh_train)
-summary(model)
+
+dataset <- sample(1:10, nrow(hh_train), replace = TRUE)
+dTrn <- hh_train[dataset[dataset<8],]
+dVal <- hh_train[dataset[dataset>7],]
+
+mTrn <- model.matrix(~., select(dTrn, -SalePrice))
+mVal <- model.matrix(~., select(dVal, -SalePrice))
+
+xTrn <- xgb.DMatrix(mTrn, label = dTrn$SalePrice)
+xVal <- xgb.DMatrix(mVal, label = dVal$SalePrice)
+
+params_xgb <- list(nthread = 4
+                   ,alpha = 0
+                   ,lambda = 1
+                   ,booster = 'gbtree'
+                   ,objective = "reg:squarederror" ,eval_metric = 'rmse' ,maximize = FALSE
+)
+
+model_xgb <- xgb.train(data = xTrn
+                       ,params = params_xgb  
+                       ,nrounds = 100
+                       ,early_stopping_rounds = 250
+                       ,print_every_n = 20
+                       ,watchlist = list(train = xTrn, eval = xVal))
+#> [09:27:47] WARNING: amalgamation/../src/learner.cc:573: 
+#> Parameters: { "maximize" } might not be used.
 #> 
-#> Call:
-#> stats::glm(formula = "SalePrice ~ .", family = "gaussian", data = hh_train)
+#>   This may not be accurate due to some parameters are only used in language bindings but
+#>   passed down to XGBoost core.  Or some parameters are not used but slip through this
+#>   verification. Please open an issue if you find above cases.
 #> 
-#> Deviance Residuals: 
-#>     Min       1Q   Median       3Q      Max  
-#> -149874   -41215    -9310    24283   533214  
 #> 
-#> Coefficients:
-#>                     Estimate Std. Error t value Pr(>|t|)    
-#> (Intercept)       -2.596e+06  1.740e+05 -14.918   <2e-16 ***
-#> GarageYrBlt        1.429e+03  8.272e+01  17.278   <2e-16 ***
-#> nhood_freqNAmes   -3.426e+04  2.755e+04  -1.244   0.2138    
-#> nhood_freqCollgCr -2.898e+04  2.778e+04  -1.043   0.2971    
-#> nhood_freqOldTown -3.282e+04  2.800e+04  -1.172   0.2414    
-#> nhood_freqEdwards -4.614e+04  2.800e+04  -1.648   0.0996 .  
-#> nhood_freqSomerst -1.090e+04  2.822e+04  -0.386   0.6995    
-#> nhood_freqOther   -2.111e+03  2.729e+04  -0.077   0.9383    
-#> OverallCond        4.563e+03  1.799e+03   2.537   0.0113 *  
-#> ExterCondFa       -8.469e+04  4.153e+04  -2.039   0.0416 *  
-#> ExterCondGd       -5.672e+04  3.920e+04  -1.447   0.1481    
-#> ExterCondPo       -1.076e+05  7.813e+04  -1.377   0.1689    
-#> ExterCondTA       -5.770e+04  3.915e+04  -1.474   0.1407    
-#> ---
-#> Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+#> [1]  train-rmse:150514.562500    eval-rmse:98545.468750 
+#> Multiple eval metrics are present. Will use eval_rmse for early stopping.
+#> Will train until eval_rmse hasn't improved in 250 rounds.
 #> 
-#> (Dispersion parameter for gaussian family taken to be 4428088746)
-#> 
-#>     Null deviance: 9.2079e+12  on 1459  degrees of freedom
-#> Residual deviance: 6.4074e+12  on 1447  degrees of freedom
-#> AIC: 36587
-#> 
-#> Number of Fisher Scoring iterations: 2
-hh_train$pred <- predict(object = model, newdata = hh_train)
+#> [21] train-rmse:127.156044   eval-rmse:49563.132812 
+#> [41] train-rmse:0.108875 eval-rmse:49639.621094 
+#> [61] train-rmse:0.018694 eval-rmse:49639.707031 
+#> [81] train-rmse:0.018694 eval-rmse:49639.707031 
+#> [100]    train-rmse:0.018694 eval-rmse:49639.707031
+
+
+dTrn$pred <- predict(object = model_xgb, newdata = xTrn)
+dVal$pred <- predict(object = model_xgb, newdata = xVal)
+
+xgboost::xgb.importance(feature_names = colnames(mTrn),
+                                                          model = model_xgb)
+#>              Feature         Gain       Cover   Frequency
+#> 1:       GarageYrBlt 9.866174e-01 0.877731160 0.872964169
+#> 2: nhood_freqCollgCr 1.338263e-02 0.117529988 0.123778502
+#> 3:         YearBuilt 9.971814e-15 0.004738852 0.003257329
 ```
 
-Model Evaluation
-----------------
+## Model Evaluation
 
 ### plot\_PDP
 
 We can now plot PDP plots for any factor
 
 ``` r
-codeBase::plot_PDP(data = hh_train,
-               model = model,
+codeBase::plot_PDP(data = as.data.frame(mTrn),
+               model = model_xgb,
                explain_col = 'GarageYrBlt',
                n_bins = 20,
                use_plotly = FALSE)
@@ -268,44 +272,13 @@ codeBase::plot_PDP(data = hh_train,
 
 ![](README_files/figure-gfm/plot_PDP-1.png)<!-- -->
 
-### plot\_PDP for 2 factors
-
-We can also plot pairs of factors
-
-``` r
-codeBase::plot_PDP(data = hh_train,
-               model = model,
-               explain_col = c('GarageYrBlt', 'OverallCond'),
-               n_bins = 10,
-               use_plotly = FALSE)
-```
-
-![](README_files/figure-gfm/plot_2D_PDP-1.png)<!-- -->
-
-Note: OverallCond: Rates the overall condition of the house 10 - Very
-Excellent 1 - Very Poor
-
-### plot\_ALE
-
-We can now plot ALE plots for any factor
-
-``` r
-codeBase::plot_ALE(data = hh_train,
-               model = model,
-               explain_col = 'GarageYrBlt',
-               n_bins = 20,
-               use_plotly = FALSE)
-```
-
-![](README_files/figure-gfm/plot_ALE-1.png)<!-- -->
-
 ### plot\_lift\_curve
 
 We can also plot useful global model outputs such as lift curves
 
 ``` r
-codeBase::plot_lift_curve(actual = hh_train$SalePrice,
-                      predicted = hh_train$pred,
+codeBase::plot_lift_curve(actual = dTrn$SalePrice,
+                      predicted = dTrn$pred,
                       use_plotly = FALSE)
 ```
 
@@ -317,20 +290,20 @@ Some users may require plotly and others ggplot2 so all plots work with
 both engines. This can be controlled with the `use_plotly` parameter of
 the plotting functions.
 
-Metrics
--------
+## Metrics
 
 We have many metrics all of which have the same construction of
 arguments meaning they can be used by other functions or in loops
 
 ``` r
-codeBase::metric_rmse(actual = hh_train$SalePrice, predicted = hh_train$pred)
-#> [1] 66246.97
-codeBase::metric_mae(actual = hh_train$SalePrice, predicted = hh_train$pred)
-#> [1] 46343.42
+codeBase::metric_rmse(actual = dTrn$SalePrice, predicted = dTrn$pred)
+#> [1] 36530.87
+codeBase::metric_mae(actual = dTrn$SalePrice, predicted = dTrn$pred)
+#> [1] 35177.08
 
-codeBase::metric_deviance(actual = hh_train$SalePrice, predicted = hh_train$pred, family = "gaussian")
-#> [1] 4388660559
-codeBase::metric_nloglik(actual = hh_train$SalePrice, predicted = hh_train$pred, family = "gaussian")
-#> [1] 12.54942
+codeBase::metric_deviance(actual = dTrn$SalePrice, predicted = dTrn$pred, family = "gaussian")
+#> [1] 1334504222
+codeBase::metric_nloglik(actual = dTrn$SalePrice, predicted = dTrn
+                         $pred, family = "gaussian")
+#> [1] 12.06549
 ```

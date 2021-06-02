@@ -28,6 +28,7 @@ library(magrittr)
 library(data.table)
 library(testthat)
 library(knitr)
+library(xgboost)
 ```
 
 ```{r, echo = FALSE, include = FALSE}
@@ -122,13 +123,40 @@ hh_train %>% group_by(nhood_freq) %>% summarise(Volume = n()) %>% kable()
 We build a model using standard R functions
 ```{r regression, include=TRUE}
 hh_train %<>% mutate(GarageYrBlt = coalesce(GarageYrBlt, YearBuilt))
-model_vars <- c('GarageYrBlt', 'nhood_freq', 'OverallCond', 'ExterCond', target)
+model_vars <- c('GarageYrBlt', 'nhood_freq', 'OverallCond', 'YearBuilt', 'YrSold', target)
 hh_train %<>% select(all_of(model_vars))
-model <- stats::glm(formula = 'SalePrice ~ .',
-                   family = 'gaussian',
-                   data = hh_train)
-summary(model)
-hh_train$pred <- predict(object = model, newdata = hh_train)
+
+dataset <- sample(1:10, nrow(hh_train), replace = TRUE)
+dTrn <- hh_train[dataset[dataset<8],]
+dVal <- hh_train[dataset[dataset>7],]
+
+mTrn <- model.matrix(~., select(dTrn, -SalePrice))
+mVal <- model.matrix(~., select(dVal, -SalePrice))
+
+xTrn <- xgb.DMatrix(mTrn, label = dTrn$SalePrice)
+xVal <- xgb.DMatrix(mVal, label = dVal$SalePrice)
+
+params_xgb <- list(nthread = 4
+                   ,alpha = 0
+                   ,lambda = 1
+                   ,booster = 'gbtree'
+                   ,objective = "reg:squarederror" ,eval_metric = 'rmse' ,maximize = FALSE
+)
+
+model_xgb <- xgb.train(data = xTrn
+                       ,params = params_xgb  
+                       ,nrounds = 100
+                       ,early_stopping_rounds = 250
+                       ,print_every_n = 20
+                       ,watchlist = list(train = xTrn, eval = xVal))
+
+
+dTrn$pred <- predict(object = model_xgb, newdata = xTrn)
+dVal$pred <- predict(object = model_xgb, newdata = xVal)
+
+xgboost::xgb.importance(feature_names = colnames(mTrn),
+                                                          model = model_xgb)
+
 ```
 
 ## Model Evaluation
@@ -137,49 +165,19 @@ hh_train$pred <- predict(object = model, newdata = hh_train)
 
 We can now plot PDP plots for any factor
 ```{r plot_PDP, warning=FALSE}
-codeBase::plot_PDP(data = hh_train,
-               model = model,
+codeBase::plot_PDP(data = as.data.frame(mTrn),
+               model = model_xgb,
                explain_col = 'GarageYrBlt',
                n_bins = 20,
                use_plotly = FALSE)
 ```
-
-
-### plot_PDP for 2 factors
-
-We can also plot pairs of factors
-```{r plot_2D_PDP}
-codeBase::plot_PDP(data = hh_train,
-               model = model,
-               explain_col = c('GarageYrBlt', 'OverallCond'),
-               n_bins = 10,
-               use_plotly = FALSE)
-```
-
-Note:
-OverallCond: Rates the overall condition of the house
-10 - Very Excellent
-1 - Very Poor
-
-### plot_ALE
-
-We can now plot ALE plots for any factor
-```{r plot_ALE}
-codeBase::plot_ALE(data = hh_train,
-               model = model,
-               explain_col = 'GarageYrBlt',
-               n_bins = 20,
-               use_plotly = FALSE)
-```
-
-
 
 ### plot_lift_curve
 
 We can also plot useful global model outputs such as lift curves
 ```{r plot_lift_curve_plotly}
-codeBase::plot_lift_curve(actual = hh_train$SalePrice,
-                      predicted = hh_train$pred,
+codeBase::plot_lift_curve(actual = dTrn$SalePrice,
+                      predicted = dTrn$pred,
                       use_plotly = FALSE)
 ```
 
@@ -194,10 +192,11 @@ We have many metrics all of which have the same construction of arguments meanin
 
 ```{r multiple metrics}
 
-codeBase::metric_rmse(actual = hh_train$SalePrice, predicted = hh_train$pred)
-codeBase::metric_mae(actual = hh_train$SalePrice, predicted = hh_train$pred)
+codeBase::metric_rmse(actual = dTrn$SalePrice, predicted = dTrn$pred)
+codeBase::metric_mae(actual = dTrn$SalePrice, predicted = dTrn$pred)
 
-codeBase::metric_deviance(actual = hh_train$SalePrice, predicted = hh_train$pred, family = "gaussian")
-codeBase::metric_nloglik(actual = hh_train$SalePrice, predicted = hh_train$pred, family = "gaussian")
+codeBase::metric_deviance(actual = dTrn$SalePrice, predicted = dTrn$pred, family = "gaussian")
+codeBase::metric_nloglik(actual = dTrn$SalePrice, predicted = dTrn
+                         $pred, family = "gaussian")
 
 ```
